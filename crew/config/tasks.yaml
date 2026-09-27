@@ -202,12 +202,18 @@ frontend_development_task:
     [complete file content]
     ```
     === END FILE ===
-    
+
     Generate ALL files listed in the architecture plan.
     The project folder path is: {project_path}
-    
+
     IMPORTANT: Use the write_file tool to save each file to the project folder.
     The file path should be: {project_path}/[relative/path/to/file.ext]
+    This runtime uses CrewAI's text-based ReAct tools. Never emit native JSON
+    function calls, tool_calls, or {"name": ..., "arguments": ...}. When a
+    tool is needed, use exactly this format and wait for the result:
+    Thought: <brief reasoning>
+    Action: write_file
+    Action Input: {"file_path": "...", "content": "..."}
   expected_output: >
     ALL project files written to disk using the write_file tool. Every file
     must be complete, working, and production-ready. Return a summary of all
