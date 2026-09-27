@@ -162,6 +162,26 @@ def _is_retryable_rate_limit(error: BaseException) -> bool:
     )
 
 
+def _is_tool_use_failure(error: BaseException) -> bool:
+    """Detect Groq rejecting GPT-OSS native tools in CrewAI's ReAct runtime."""
+    text = str(error).lower()
+    return "tool_use_failed" in text or "tool choice is none" in text
+
+
+_REACT_TOOL_INSTRUCTION = {
+    "role": "user",
+    "content": (
+        "Use CrewAI's text-based ReAct protocol for tools. Do not emit native "
+        "JSON function calls, tool_calls, or a JSON object with name/arguments. "
+        "If a tool is needed, output exactly:\n"
+        "Thought: <brief reasoning>\n"
+        "Action: <exact tool name>\n"
+        "Action Input: <valid JSON object>\n"
+        "Then wait for the tool result."
+    ),
+}
+
+
 def _retry_delay(error: BaseException, attempt: int) -> float:
     """Use a provider-suggested delay when present, otherwise exponential backoff."""
     text = str(error)
@@ -187,10 +207,11 @@ class RateLimitAwareLLM(LLM):
         callbacks: list[Any] | None = None,
     ) -> str:
         retries = _env_int("GROQ_MAX_RETRIES", _DEFAULT_MAX_RETRIES)
+        request_messages = messages
         for attempt in range(retries + 1):
             _pace_requests()
             try:
-                response = super().call(messages, callbacks or [])
+                response = super().call(request_messages, callbacks or [])
                 if response is not None and str(response).strip():
                     return response
 
@@ -204,6 +225,14 @@ class RateLimitAwareLLM(LLM):
                 time.sleep(min(2.0, 0.5 * (attempt + 1)))
                 continue
             except Exception as error:
+                if _is_tool_use_failure(error) and attempt < retries:
+                    if _REACT_TOOL_INSTRUCTION not in request_messages:
+                        request_messages = [
+                            *request_messages,
+                            _REACT_TOOL_INSTRUCTION,
+                        ]
+                    time.sleep(0.25)
+                    continue
                 if not _is_retryable_rate_limit(error) or attempt >= retries:
                     raise
                 # Groq TPM errors include the prompt plus the requested output
