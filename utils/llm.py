@@ -10,7 +10,7 @@ Required Streamlit secret or environment variable:
     GROQ_API_KEY = "gsk_..."
 
 Optional configuration:
-    LLM_MODEL = "openai/gpt-oss-120b"
+    LLM_MODEL = "llama-3.1-8b-instant"
     GROQ_MIN_REQUEST_INTERVAL_SECONDS = "1.0"
     GROQ_MAX_RETRIES = "3"
 """
@@ -56,7 +56,8 @@ def get_api_key(key_name: str = "GROQ_API_KEY") -> str:
 # MODEL AND RATE-LIMIT SETTINGS
 # -------------------------------------------------------------------
 
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "llama-3.1-8b-instant"
+DEFAULT_FALLBACK_MODEL = "llama-3.1-8b-instant"
 _DEFAULT_MIN_REQUEST_INTERVAL = 1.0
 _DEFAULT_MAX_RETRIES = 3
 
@@ -72,6 +73,18 @@ def get_model_name() -> str:
         pass
 
     return os.getenv("LLM_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+
+
+def get_fallback_model_name() -> str:
+    """Read the lower-cost model used when the primary model hits TPM limits."""
+    try:
+        if hasattr(st, "secrets") and "FALLBACK_LLM_MODEL" in st.secrets:
+            value = st.secrets["FALLBACK_LLM_MODEL"]
+            if value:
+                return str(value).strip()
+    except Exception:
+        pass
+    return os.getenv("FALLBACK_LLM_MODEL", DEFAULT_FALLBACK_MODEL).strip() or DEFAULT_FALLBACK_MODEL
 
 
 def _groq_model(model_name: str) -> str:
@@ -171,7 +184,24 @@ class RateLimitAwareLLM(LLM):
                 # oversized request.
                 if self.max_tokens:
                     self.max_tokens = max(256, self.max_tokens // 2)
-                time.sleep(_retry_delay(error, attempt))
+
+                # GPT-OSS 120B commonly has a very small free-tier TPM window.
+                # Switch once to the lightweight Groq model so a hard limit on
+                # the primary model does not abort the complete pipeline.
+                fallback_model = _groq_model(get_fallback_model_name())
+                switched_to_fallback = (
+                    not getattr(self, "_fallback_used", False)
+                    and self.model != fallback_model
+                )
+                if switched_to_fallback:
+                    self.model = fallback_model
+                    self._fallback_used = True
+                    self.max_tokens = min(self.max_tokens or 1024, 1024)
+
+                delay = _retry_delay(error, attempt)
+                # A model switch uses a separate model quota; do not make the
+                # user wait through the old model's cooldown unnecessarily.
+                time.sleep(min(delay, 1.0) if switched_to_fallback else delay)
 
         raise RuntimeError("LLM call exhausted its retry budget")
 
