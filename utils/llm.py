@@ -17,6 +17,7 @@ Optional configuration:
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import re
@@ -26,6 +27,9 @@ from typing import Any
 
 import streamlit as st
 from crewai import LLM
+
+
+logger = logging.getLogger(__name__)
 
 
 # -------------------------------------------------------------------
@@ -60,6 +64,10 @@ DEFAULT_MODEL = "openai/gpt-oss-120b"
 DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-120b"
 _DEFAULT_MIN_REQUEST_INTERVAL = 1.0
 _DEFAULT_MAX_RETRIES = 3
+
+# Floors and caps used when adjusting max_tokens during retries.
+_MIN_USEFUL_MAX_TOKENS = 4096
+_MAX_ALLOWED_MAX_TOKENS = 32768
 
 
 def get_model_name() -> str:
@@ -181,6 +189,14 @@ _REACT_TOOL_INSTRUCTION = {
     ),
 }
 
+_DIRECT_OUTPUT_INSTRUCTION = {
+    "role": "user",
+    "content": (
+        "Return the requested answer directly. Do not spend the entire "
+        "response on hidden reasoning."
+    ),
+}
+
 
 def _retry_delay(error: BaseException, attempt: int) -> float:
     """Use a provider-suggested delay when present, otherwise exponential backoff."""
@@ -210,34 +226,52 @@ class RateLimitAwareLLM(LLM):
         request_messages = messages
         for attempt in range(retries + 1):
             _pace_requests()
+
+            # Diagnostic log: if this fires 4x with climbing max_tokens and
+            # then the empty-response error appears, the fix is working.
+            logger.warning(
+                "Groq call attempt=%s model=%s max_tokens=%s reasoning_effort=%s",
+                attempt,
+                self.model,
+                self.max_tokens,
+                self.kwargs.get("reasoning_effort"),
+            )
+
             try:
                 response = super().call(request_messages, callbacks or [])
                 if response is not None and str(response).strip():
                     return response
 
-                # CrewAI aborts on None/empty output. Treat it as a transient
-                # provider response. GPT-OSS gets a direct-output instruction
-                # and low reasoning effort on the retry so reasoning tokens do
-                # not consume the entire completion budget.
+                # -----------------------------------------------------------
+                # EMPTY RESPONSE HANDLING
+                # -----------------------------------------------------------
+                # With gpt-oss, an empty completion almost always means the
+                # hidden reasoning tokens consumed the entire max_tokens
+                # window. Simply re-sending the same request will fail again.
+                # Push reasoning to the floor and GROW the output budget.
                 if attempt >= retries:
                     raise ValueError(
                         "Groq returned an empty response after "
                         f"{retries + 1} attempts."
                     )
+
                 self.kwargs["reasoning_effort"] = "low"
-                if {"role": "user", "content": "Return the requested answer directly. Do not spend the entire response on hidden reasoning."} not in request_messages:
+
+                current = self.max_tokens or 0
+                self.max_tokens = min(
+                    _MAX_ALLOWED_MAX_TOKENS,
+                    max(_MIN_USEFUL_MAX_TOKENS, current * 2),
+                )
+
+                if _DIRECT_OUTPUT_INSTRUCTION not in request_messages:
                     request_messages = [
                         *request_messages,
-                        {
-                            "role": "user",
-                            "content": (
-                                "Return the requested answer directly. Do not "
-                                "spend the entire response on hidden reasoning."
-                            ),
-                        },
+                        _DIRECT_OUTPUT_INSTRUCTION,
                     ]
+
                 time.sleep(min(2.0, 0.5 * (attempt + 1)))
                 continue
+
             except Exception as error:
                 if _is_tool_use_failure(error) and attempt < retries:
                     if _REACT_TOOL_INSTRUCTION not in request_messages:
@@ -252,9 +286,12 @@ class RateLimitAwareLLM(LLM):
                 # Groq TPM errors include the prompt plus the requested output
                 # budget. Shrink the next request so the retry can fit after
                 # the provider-suggested cooldown instead of repeating the same
-                # oversized request.
+                # oversized request. Never shrink below a size that can still
+                # produce a real file.
                 if self.max_tokens:
-                    self.max_tokens = max(256, self.max_tokens // 2)
+                    self.max_tokens = max(
+                        _MIN_USEFUL_MAX_TOKENS, self.max_tokens // 2
+                    )
 
                 # GPT-OSS 120B commonly has a very small free-tier TPM window.
                 # Switch once to the lightweight Groq model so a hard limit on
@@ -267,7 +304,10 @@ class RateLimitAwareLLM(LLM):
                 if switched_to_fallback:
                     self.model = fallback_model
                     self._fallback_used = True
-                    self.max_tokens = min(self.max_tokens or 1024, 1024)
+                    self.max_tokens = max(
+                        _MIN_USEFUL_MAX_TOKENS,
+                        min(self.max_tokens or _MIN_USEFUL_MAX_TOKENS, 1024),
+                    )
 
                 delay = _retry_delay(error, attempt)
                 # A model switch uses a separate model quota; do not make the
@@ -309,7 +349,10 @@ def get_planning_llm(temperature: float = 0.3) -> LLM:
 
 
 def get_development_llm(temperature: float = 0.3) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=2048)
+    # Development writes many complete files in one response; reasoning tokens
+    # on gpt-oss count against max_tokens, so leave real headroom above the
+    # reasoning budget or the visible answer will be truncated to empty.
+    return _create_llm(temperature=temperature, max_tokens=16384)
 
 
 def get_review_llm(temperature: float = 0.2) -> LLM:
@@ -325,4 +368,4 @@ def get_fast_llm(temperature: float = 0.3) -> LLM:
 
 
 def get_powerful_llm(temperature: float = 0.3) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=2048)
+    return _create_llm(temperature=temperature, max_tokens=8192)
