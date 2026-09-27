@@ -216,12 +216,26 @@ class RateLimitAwareLLM(LLM):
                     return response
 
                 # CrewAI aborts on None/empty output. Treat it as a transient
-                # provider response and retry before that error escapes.
+                # provider response. GPT-OSS gets a direct-output instruction
+                # and low reasoning effort on the retry so reasoning tokens do
+                # not consume the entire completion budget.
                 if attempt >= retries:
                     raise ValueError(
                         "Groq returned an empty response after "
                         f"{retries + 1} attempts."
                     )
+                self.kwargs["reasoning_effort"] = "low"
+                if {"role": "user", "content": "Return the requested answer directly. Do not spend the entire response on hidden reasoning."} not in request_messages:
+                    request_messages = [
+                        *request_messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                "Return the requested answer directly. Do not "
+                                "spend the entire response on hidden reasoning."
+                            ),
+                        },
+                    ]
                 time.sleep(min(2.0, 0.5 * (attempt + 1)))
                 continue
             except Exception as error:
@@ -277,6 +291,7 @@ def _create_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
+        reasoning_effort="low",
     )
 
 
@@ -289,9 +304,8 @@ def get_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
 
 
 def get_planning_llm(temperature: float = 0.3) -> LLM:
-    # GPT-OSS may spend part of the budget on reasoning before producing the
-    # visible plan. 768 tokens can therefore yield an empty completion.
-    return _create_llm(temperature=temperature, max_tokens=2048)
+    # Keep enough room for GPT-OSS reasoning plus a complete visible plan.
+    return _create_llm(temperature=temperature, max_tokens=4096)
 
 
 def get_development_llm(temperature: float = 0.3) -> LLM:
