@@ -181,12 +181,28 @@ def _retry_delay(error: BaseException, attempt: int) -> float:
 class RateLimitAwareLLM(LLM):
     """CrewAI LLM with pacing and bounded retries for transient Groq 429s."""
 
-    def call(self, messages: list[dict[str, str]], callbacks: list[Any] | None = None) -> str:
+    def call(
+        self,
+        messages: list[dict[str, str]],
+        callbacks: list[Any] | None = None,
+    ) -> str:
         retries = _env_int("GROQ_MAX_RETRIES", _DEFAULT_MAX_RETRIES)
         for attempt in range(retries + 1):
             _pace_requests()
             try:
-                return super().call(messages, callbacks or [])
+                response = super().call(messages, callbacks or [])
+                if response is not None and str(response).strip():
+                    return response
+
+                # CrewAI aborts on None/empty output. Treat it as a transient
+                # provider response and retry before that error escapes.
+                if attempt >= retries:
+                    raise ValueError(
+                        "Groq returned an empty response after "
+                        f"{retries + 1} attempts."
+                    )
+                time.sleep(min(2.0, 0.5 * (attempt + 1)))
+                continue
             except Exception as error:
                 if not _is_retryable_rate_limit(error) or attempt >= retries:
                     raise
