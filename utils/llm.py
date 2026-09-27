@@ -129,6 +129,7 @@ def _is_retryable_rate_limit(error: BaseException) -> bool:
         "ratelimit" in error_name
         or "too many requests" in text
         or "rate limit" in text
+        or "rate_limit_exceeded" in text
         or "status code: 429" in text
         or "status_code=429" in text
         or "http 429" in text
@@ -164,6 +165,12 @@ class RateLimitAwareLLM(LLM):
             except Exception as error:
                 if not _is_retryable_rate_limit(error) or attempt >= retries:
                     raise
+                # Groq TPM errors include the prompt plus the requested output
+                # budget. Shrink the next request so the retry can fit after
+                # the provider-suggested cooldown instead of repeating the same
+                # oversized request.
+                if self.max_tokens:
+                    self.max_tokens = max(256, self.max_tokens // 2)
                 time.sleep(_retry_delay(error, attempt))
 
         raise RuntimeError("LLM call exhausted its retry budget")
@@ -196,24 +203,24 @@ def get_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
 
 def get_planning_llm(temperature: float = 0.3) -> LLM:
     # Planning output is structured and should not consume the whole TPM window.
-    return _create_llm(temperature=temperature, max_tokens=2048)
+    return _create_llm(temperature=temperature, max_tokens=768)
 
 
 def get_development_llm(temperature: float = 0.3) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=4096)
+    return _create_llm(temperature=temperature, max_tokens=2048)
 
 
 def get_review_llm(temperature: float = 0.2) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=2048)
+    return _create_llm(temperature=temperature, max_tokens=1024)
 
 
 def get_debug_llm(temperature: float = 0.2) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=4096)
-
-
-def get_fast_llm(temperature: float = 0.3) -> LLM:
     return _create_llm(temperature=temperature, max_tokens=2048)
 
 
+def get_fast_llm(temperature: float = 0.3) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=1024)
+
+
 def get_powerful_llm(temperature: float = 0.3) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=4096)
+    return _create_llm(temperature=temperature, max_tokens=2048)
