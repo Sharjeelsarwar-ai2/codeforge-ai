@@ -52,9 +52,9 @@ def create_agents() -> dict:
     configs = load_agent_configs()
 
     # --- LLM tiers (same model, different temperatures) ---
-    strict_llm = get_llm(temperature=0.2)     # QA, review, docs, debug
-    balanced_llm = get_llm(temperature=0.3)   # coding, planning, architecture
-    creative_llm = get_llm(temperature=0.5)   # design, animation
+    strict_llm = get_llm(temperature=0.2)
+    balanced_llm = get_llm(temperature=0.3)
+    creative_llm = get_llm(temperature=0.5)
 
     # --- Tool bundles ---
     file_tools = [
@@ -72,10 +72,6 @@ def create_agents() -> dict:
 
     agents = {}
 
-    # ------------------------------------------------------------------ #
-    #  PLANNING AGENTS
-    # ------------------------------------------------------------------ #
-
     # 1. Business Analyst
     cfg = configs["client_requirement_agent"]
     agents["requirement"] = Agent(
@@ -86,6 +82,7 @@ def create_agents() -> dict:
         verbose=True,
         allow_delegation=False,
         max_iter=3,
+        cache=False,
     )
 
     # 2. Product Manager
@@ -98,11 +95,8 @@ def create_agents() -> dict:
         verbose=True,
         allow_delegation=False,
         max_iter=3,
+        cache=False,
     )
-
-    # ------------------------------------------------------------------ #
-    #  DESIGN AGENTS  (higher temperature — creativity matters)
-    # ------------------------------------------------------------------ #
 
     # 3. UI/UX Designer
     cfg = configs["ui_ux_designer_agent"]
@@ -114,9 +108,10 @@ def create_agents() -> dict:
         verbose=True,
         allow_delegation=False,
         max_iter=3,
+        cache=False,
     )
 
-    # 4. Motion / Animation Designer
+    # 4. Animation Agent
     cfg = configs["animation_agent"]
     agents["animation"] = Agent(
         role=cfg["role"],
@@ -126,6 +121,7 @@ def create_agents() -> dict:
         verbose=True,
         allow_delegation=False,
         max_iter=3,
+        cache=False,
     )
 
     # 5. Frontend Architect
@@ -138,13 +134,10 @@ def create_agents() -> dict:
         verbose=True,
         allow_delegation=False,
         max_iter=3,
+        cache=False,
     )
 
-    # ------------------------------------------------------------------ #
-    #  DEVELOPMENT AGENTS
-    # ------------------------------------------------------------------ #
-
-    # 6. Frontend Developer  ← most important agent
+    # 6. Frontend Developer
     cfg = configs["frontend_developer_agent"]
     agents["developer"] = Agent(
         role=cfg["role"],
@@ -155,11 +148,8 @@ def create_agents() -> dict:
         allow_delegation=False,
         tools=file_tools + [extract_code_blocks],
         max_iter=15,
+        cache=False,
     )
-
-    # ------------------------------------------------------------------ #
-    #  QUALITY AGENTS  (low temperature — strict/consistent)
-    # ------------------------------------------------------------------ #
 
     # 7. Code Reviewer
     cfg = configs["code_reviewer_agent"]
@@ -172,9 +162,10 @@ def create_agents() -> dict:
         allow_delegation=False,
         tools=[read_file, list_all_files] + code_tools,
         max_iter=5,
+        cache=False,
     )
 
-    # 8. QA Engineer
+    # 8. QA Testing Agent
     cfg = configs["qa_testing_agent"]
     agents["qa"] = Agent(
         role=cfg["role"],
@@ -185,9 +176,10 @@ def create_agents() -> dict:
         allow_delegation=False,
         tools=[read_file, list_all_files],
         max_iter=5,
+        cache=False,
     )
 
-    # 9. Debug / Self-Healing Engineer
+    # 9. Debug Agent
     cfg = configs["debug_agent"]
     agents["debug"] = Agent(
         role=cfg["role"],
@@ -198,9 +190,10 @@ def create_agents() -> dict:
         allow_delegation=False,
         tools=file_tools + code_tools,
         max_iter=10,
+        cache=False,
     )
 
-    # 10. Documentation Writer
+    # 10. Documentation Agent
     cfg = configs["documentation_agent"]
     agents["documentation"] = Agent(
         role=cfg["role"],
@@ -211,6 +204,7 @@ def create_agents() -> dict:
         allow_delegation=False,
         tools=project_tools_list + [create_file_tree],
         max_iter=5,
+        cache=False,
     )
 
     return agents
