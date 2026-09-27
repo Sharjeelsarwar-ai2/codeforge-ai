@@ -1,24 +1,29 @@
 # utils/llm.py
-"""
-LLM configuration for CodeForge AI.
+"""LLM configuration for CodeForge AI.
 
-Uses Groq's GPT-OSS 120B model through CrewAI's native LLM interface.
+The application runs ten CrewAI agents sequentially through Groq. Groq can
+return HTTP 429 responses for short-lived RPM/TPM bursts, so this module keeps
+requests paced and retries only transient rate-limit failures. Permanent quota
+errors are surfaced immediately instead of being retried pointlessly.
 
-Different token budgets are used for different phases:
-
-- Planning agents: smaller responses to stay within Groq TPM limits
-- Development agents: larger responses because they generate code
-- Review/QA agents: medium responses
-- Debug agents: larger responses when code fixes are required
-
-Required Streamlit secret:
+Required Streamlit secret or environment variable:
     GROQ_API_KEY = "gsk_..."
 
-Optional:
+Optional configuration:
     LLM_MODEL = "openai/gpt-oss-120b"
+    GROQ_MIN_REQUEST_INTERVAL_SECONDS = "1.0"
+    GROQ_MAX_RETRIES = "3"
 """
 
+from __future__ import annotations
+
 import os
+import random
+import re
+import threading
+import time
+from typing import Any
+
 import streamlit as st
 from crewai import LLM
 
@@ -28,84 +33,153 @@ from crewai import LLM
 # -------------------------------------------------------------------
 
 def get_api_key(key_name: str = "GROQ_API_KEY") -> str:
-    """
-    Get the Groq API key from Streamlit Secrets or environment variables.
-    """
-
+    """Get a provider API key from Streamlit Secrets or the environment."""
     try:
         if hasattr(st, "secrets") and key_name in st.secrets:
             value = st.secrets[key_name]
-
             if value and value != f"your_{key_name.lower()}_here":
                 return str(value)
-
     except Exception:
+        # Streamlit Secrets raises when the app is run outside Streamlit.
         pass
 
     value = os.getenv(key_name)
-
     if value:
         return value
 
     raise ValueError(
-        f"{key_name} not found. "
-        f"Add it to Streamlit Secrets or set it as an environment variable."
+        f"{key_name} not found. Add it to Streamlit Secrets or set it as an environment variable."
     )
 
 
 # -------------------------------------------------------------------
-# MODEL
+# MODEL AND RATE-LIMIT SETTINGS
 # -------------------------------------------------------------------
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+_DEFAULT_MIN_REQUEST_INTERVAL = 1.0
+_DEFAULT_MAX_RETRIES = 3
 
 
 def get_model_name() -> str:
-    """
-    Get model name from Streamlit Secrets or environment variables.
-    """
-
+    """Read the configured model name and remove an optional provider prefix."""
     try:
         if hasattr(st, "secrets") and "LLM_MODEL" in st.secrets:
             value = st.secrets["LLM_MODEL"]
-
             if value:
-                return str(value)
-
+                return str(value).strip()
     except Exception:
         pass
 
-    value = os.getenv("LLM_MODEL")
+    return os.getenv("LLM_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
-    if value:
-        return value
 
-    return DEFAULT_MODEL
+def _groq_model(model_name: str) -> str:
+    """Return exactly one LiteLLM Groq provider prefix."""
+    if model_name.startswith("groq/"):
+        return model_name
+    return f"groq/{model_name}"
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+# A process-wide gate is important because each CrewAI agent receives its own
+# LLM object, but all of them share the same Groq key and rate limit.
+_request_gate = threading.Lock()
+_last_request_at = 0.0
+
+
+def _pace_requests() -> None:
+    """Keep sequential agent calls from creating an RPM burst."""
+    global _last_request_at
+    interval = _env_float(
+        "GROQ_MIN_REQUEST_INTERVAL_SECONDS", _DEFAULT_MIN_REQUEST_INTERVAL
+    )
+    if interval <= 0:
+        return
+
+    with _request_gate:
+        wait_for = interval - (time.monotonic() - _last_request_at)
+        if wait_for > 0:
+            time.sleep(wait_for)
+        _last_request_at = time.monotonic()
+
+
+def _is_retryable_rate_limit(error: BaseException) -> bool:
+    """Recognize transient 429/rate-limit errors across LiteLLM versions."""
+    text = str(error).lower()
+    error_name = type(error).__name__.lower()
+
+    if any(marker in text for marker in ("insufficient_quota", "quota exceeded", "per day")):
+        return False
+
+    return (
+        "ratelimit" in error_name
+        or "too many requests" in text
+        or "rate limit" in text
+        or "status code: 429" in text
+        or "status_code=429" in text
+        or "http 429" in text
+        or re.search(r"\b429\b", text) is not None
+    )
+
+
+def _retry_delay(error: BaseException, attempt: int) -> float:
+    """Use a provider-suggested delay when present, otherwise exponential backoff."""
+    text = str(error)
+    patterns = (
+        r"retry[- ]after[\s:=]+([0-9]+(?:\.[0-9]+)?)",
+        r"try again in[\s:]+([0-9]+(?:\.[0-9]+)?)\s*s?",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return min(60.0, max(0.5, float(match.group(1)))) + random.uniform(0, 0.25)
+
+    # Jitter prevents multiple Streamlit workers from retrying simultaneously.
+    return min(60.0, 2.0 ** attempt) + random.uniform(0, 0.25)
+
+
+class RateLimitAwareLLM(LLM):
+    """CrewAI LLM with pacing and bounded retries for transient Groq 429s."""
+
+    def call(self, messages: list[dict[str, str]], callbacks: list[Any] | None = None) -> str:
+        retries = _env_int("GROQ_MAX_RETRIES", _DEFAULT_MAX_RETRIES)
+        for attempt in range(retries + 1):
+            _pace_requests()
+            try:
+                return super().call(messages, callbacks or [])
+            except Exception as error:
+                if not _is_retryable_rate_limit(error) or attempt >= retries:
+                    raise
+                time.sleep(_retry_delay(error, attempt))
+
+        raise RuntimeError("LLM call exhausted its retry budget")
 
 
 # -------------------------------------------------------------------
 # COMMON LLM FACTORY
 # -------------------------------------------------------------------
 
-def _create_llm(
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
-) -> LLM:
-    """
-    Create a CrewAI LLM instance.
-
-    max_tokens is configurable so different CodeForge phases
-    can use different response budgets.
-    """
-
+def _create_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
+    """Create a paced, retrying CrewAI LLM with a bounded output budget."""
     api_key = get_api_key("GROQ_API_KEY")
-    model_name = get_model_name()
-
-    # Make sure LiteLLM/Groq can find the key.
     os.environ["GROQ_API_KEY"] = api_key
 
-    return LLM(
-        model=f"groq/{model_name}",
+    return RateLimitAwareLLM(
+        model=_groq_model(get_model_name()),
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -113,124 +187,33 @@ def _create_llm(
 
 
 # -------------------------------------------------------------------
-# GENERAL LLM
+# PUBLIC LLM FACTORIES
 # -------------------------------------------------------------------
 
-def get_llm(
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
-) -> LLM:
-    """
-    General-purpose LLM.
-
-    Default is intentionally lower than the previous 8192-token
-    configuration to reduce Groq TPM usage.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+def get_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=max_tokens)
 
 
-# -------------------------------------------------------------------
-# PLANNING LLM
-# -------------------------------------------------------------------
-
-def get_planning_llm(
-    temperature: float = 0.3,
-) -> LLM:
-    """
-    LLM specifically for planning agents.
-
-    Planning should produce concise specifications rather than
-    enormous responses.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=3000,
-    )
+def get_planning_llm(temperature: float = 0.3) -> LLM:
+    # Planning output is structured and should not consume the whole TPM window.
+    return _create_llm(temperature=temperature, max_tokens=2048)
 
 
-# -------------------------------------------------------------------
-# DEVELOPMENT LLM
-# -------------------------------------------------------------------
-
-def get_development_llm(
-    temperature: float = 0.3,
-) -> LLM:
-    """
-    LLM for actual code generation.
-
-    Development needs more output space than planning.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=8192,
-    )
+def get_development_llm(temperature: float = 0.3) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=4096)
 
 
-# -------------------------------------------------------------------
-# REVIEW / QA LLM
-# -------------------------------------------------------------------
-
-def get_review_llm(
-    temperature: float = 0.2,
-) -> LLM:
-    """
-    LLM for code review and QA reports.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=4000,
-    )
+def get_review_llm(temperature: float = 0.2) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=2048)
 
 
-# -------------------------------------------------------------------
-# DEBUG LLM
-# -------------------------------------------------------------------
-
-def get_debug_llm(
-    temperature: float = 0.2,
-) -> LLM:
-    """
-    LLM for debugging and fixing generated code.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=6000,
-    )
+def get_debug_llm(temperature: float = 0.2) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=4096)
 
 
-# -------------------------------------------------------------------
-# FAST / POWERFUL COMPATIBILITY FUNCTIONS
-# -------------------------------------------------------------------
-
-def get_fast_llm(
-    temperature: float = 0.3,
-) -> LLM:
-    """
-    Compatibility helper for lightweight tasks.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=3000,
-    )
+def get_fast_llm(temperature: float = 0.3) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=2048)
 
 
-def get_powerful_llm(
-    temperature: float = 0.3,
-) -> LLM:
-    """
-    Compatibility helper for larger tasks.
-    """
-
-    return _create_llm(
-        temperature=temperature,
-        max_tokens=8192,
-    )
+def get_powerful_llm(temperature: float = 0.3) -> LLM:
+    return _create_llm(temperature=temperature, max_tokens=4096)
