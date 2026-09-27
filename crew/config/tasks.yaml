@@ -200,164 +200,231 @@ frontend_development_task:
     === FILE: [relative/path/to/file.ext] ===
     ```[language]
     [complete file content]
-    ```
-    === END FILE ===
+=== END FILE ===
 
-    Generate ALL files listed in the architecture plan.
-    The project folder path is: {project_path}
+Generate ALL files listed in the architecture plan.
+The project folder path is: {project_path}
 
-    IMPORTANT: Use the write_file tool to save each file to the project folder.
-    The file path should be: {project_path}/[relative/path/to/file.ext]
-    This runtime uses CrewAI's text-based ReAct tools. Never emit native JSON
-    function calls, tool_calls, or {"name": ..., "arguments": ...}. When a
-    tool is needed, use exactly this format and wait for the result:
-    Thought: <brief reasoning>
-    Action: write_file
-    Action Input: {"file_path": "...", "content": "..."}
-  expected_output: >
-    ALL project files written to disk using the write_file tool. Every file
-    must be complete, working, and production-ready. Return a summary of all
-    files created with their paths.
+IMPORTANT: Use the write_file tool to save each file to the project folder.
+The file path should be: {project_path}/[relative/path/to/file.ext]
+This runtime uses CrewAI's text-based ReAct tools. Never emit native JSON
+function calls, tool_calls, or {{"name": ..., "arguments": ...}}. When a
+tool is needed, use exactly this format and wait for the result:
+Thought: <brief reasoning>
+Action: write_file
+Action Input: {{"file_path": "...", "content": "..."}}
+expected_output: >
+ALL project files written to disk using the write_file tool. Every file
+must be complete, working, and production-ready. Return a summary of all
+files created with their paths.
 
 code_review_task:
-  description: >
-    Review ALL generated code files in the project at: {project_path}
-    
-    Use the read_file tool to read each file and check for:
-    
-    1. **HTML Quality:**
-       - Semantic HTML5 elements used correctly
-       - All tags properly closed
-       - Proper meta tags present
-       - Accessibility attributes (aria, alt, role)
-       - SEO basics (title, meta description)
-    
-    2. **CSS Quality:**
-       - Responsive design works (check media queries)
-       - No unused styles
-       - Consistent naming conventions
-       - Proper use of custom properties
-       - No !important overuse
-       - Color contrast accessibility
-    
-    3. **JavaScript Quality:**
-       - No errors or broken syntax
-       - Event listeners properly attached
-       - DOM ready handling
-       - No global variable pollution
-       - Proper error handling
-    
-    4. **Cross-file Consistency:**
-       - All CSS/JS files properly linked in HTML
-       - File paths are correct
-       - No broken references
-    
-    5. **Animation Quality:**
-       - GSAP properly initialized
-       - ScrollTrigger configured correctly
-       - Animations enhance UX
-    
-    For EACH issue found, provide:
-    - File path
-    - Line/section reference
-    - The exact problem
-    - The exact fix (provide corrected code)
-    
-    Use the validate_html, validate_css, and validate_javascript tools to help.
-  expected_output: >
-    A detailed code review report with all issues categorized by severity
-    (Critical, Major, Minor) and exact fixes provided for each issue.
+description: >
+Review ALL generated code files in the project at: {project_path}
+
+Use the read_file tool to read each file and check for:
+
+HTML Quality:
+
+Semantic HTML5 elements used correctly
+
+All tags properly closed
+
+Proper meta tags present
+
+Accessibility attributes (aria, alt, role)
+
+SEO basics (title, meta description)
+
+CSS Quality:
+
+Responsive design works (check media queries)
+
+No unused styles
+
+Consistent naming conventions
+
+Proper use of custom properties
+
+No !important overuse
+
+Color contrast accessibility
+
+JavaScript Quality:
+
+No errors or broken syntax
+
+Event listeners properly attached
+
+DOM ready handling
+
+No global variable pollution
+
+Proper error handling
+
+Cross-file Consistency:
+
+All CSS/JS files properly linked in HTML
+
+File paths are correct
+
+No broken references
+
+Animation Quality:
+
+GSAP properly initialized
+
+ScrollTrigger configured correctly
+
+Animations enhance UX
+
+For EACH issue found, provide:
+
+File path
+
+Line/section reference
+
+The exact problem
+
+The exact fix (provide corrected code)
+
+Use the validate_html, validate_css, and validate_javascript tools to help.
+expected_output: >
+A detailed code review report with all issues categorized by severity
+(Critical, Major, Minor) and exact fixes provided for each issue.
 
 qa_testing_task:
-  description: >
-    Perform comprehensive QA testing on the project at: {project_path}
-    
-    Test the following:
-    
-    1. **Responsiveness Testing:**
-       - Mobile (320px - 480px)
-       - Tablet (768px - 1024px)
-       - Desktop (1280px+)
-       - Check navbar, hero, sections, footer at each breakpoint
-    
-    2. **Functionality Testing:**
-       - All navigation links work
-       - All buttons have hover states
-       - Forms have proper validation styling
-       - Smooth scroll works
-       - Mobile menu toggle works
-    
-    3. **Visual Testing:**
-       - Text is readable at all sizes
-       - Images don't overflow
-       - No horizontal scroll on mobile
-       - Proper spacing and alignment
-       - Animations don't break layout
-    
-    4. **Accessibility Testing:**
-       - Color contrast ratios
-       - Focus states on interactive elements
-       - Alt text on images
-       - Keyboard navigation
-    
-    5. **Performance:**
-       - No unnecessarily large files
-       - CSS/JS not duplicated
-       - Images optimized (using CDN)
-    
-    Report all issues with severity: CRITICAL, HIGH, MEDIUM, LOW
-  expected_output: >
-    A QA test report with all issues listed, categorized by severity, with
-    steps to reproduce and expected behavior for each issue.
+description: >
+Perform comprehensive QA testing on the project at: {project_path}
+
+Test the following:
+
+Responsiveness Testing:
+
+Mobile (320px - 480px)
+
+Tablet (768px - 1024px)
+
+Desktop (1280px+)
+
+Check navbar, hero, sections, footer at each breakpoint
+
+Functionality Testing:
+
+All navigation links work
+
+All buttons have hover states
+
+Forms have proper validation styling
+
+Smooth scroll works
+
+Mobile menu toggle works
+
+Visual Testing:
+
+Text is readable at all sizes
+
+Images don't overflow
+
+No horizontal scroll on mobile
+
+Proper spacing and alignment
+
+Animations don't break layout
+
+Accessibility Testing:
+
+Color contrast ratios
+
+Focus states on interactive elements
+
+Alt text on images
+
+Keyboard navigation
+
+Performance:
+
+No unnecessarily large files
+
+CSS/JS not duplicated
+
+Images optimized (using CDN)
+
+Report all issues with severity: CRITICAL, HIGH, MEDIUM, LOW
+expected_output: >
+A QA test report with all issues listed, categorized by severity, with
+steps to reproduce and expected behavior for each issue.
 
 debug_and_fix_task:
-  description: >
-    Based on the code review and QA testing results, fix ALL identified issues
-    in the project at: {project_path}
-    
-    For EACH issue:
-    1. Read the affected file using read_file
-    2. Understand the root cause
-    3. Write the corrected code
-    4. Use write_file to save the fixed file
-    
-    **IMPORTANT RULES:**
-    - Fix ALL critical and high-severity issues
-    - Fix as many medium/low issues as possible
-    - Do NOT introduce new issues while fixing
-    - Maintain all existing functionality
-    - Keep the design system consistent
-    - Ensure all animations still work after fixes
-    
-    After fixing, verify the files are correct by reading them again.
-  expected_output: >
-    A list of all fixes applied with before/after descriptions. All fixed
-    files should be saved to disk using write_file.
+description: >
+Based on the code review and QA testing results, fix ALL identified issues
+in the project at: {project_path}
+
+For EACH issue:
+
+Read the affected file using read_file
+
+Understand the root cause
+
+Write the corrected code
+
+Use write_file to save the fixed file
+
+IMPORTANT RULES:
+
+Fix ALL critical and high-severity issues
+
+Fix as many medium/low issues as possible
+
+Do NOT introduce new issues while fixing
+
+Maintain all existing functionality
+
+Keep the design system consistent
+
+Ensure all animations still work after fixes
+
+After fixing, verify the files are correct by reading them again.
+expected_output: >
+A list of all fixes applied with before/after descriptions. All fixed
+files should be saved to disk using write_file.
 
 documentation_task:
-  description: >
-    Generate complete documentation and prepare the project for deployment.
-    Project path: {project_path}
-    
-    1. Use the generate_readme tool to create a professional README.md
-    2. Use the generate_gitignore tool to create a .gitignore file
-    3. Use the save_project_metadata tool to save project metadata
-    
-    The README should include:
-    - Project name and description
-    - Tech stack used
-    - Features list
-    - Setup instructions
-    - File structure
-    - Deployment guide (Netlify, GitHub Pages, Vercel)
-    
-    Also create a deployment guide that covers:
-    - Netlify drag & drop deployment
-    - GitHub Pages deployment
-    - Vercel deployment
-    
-    Project name: {project_name}
-    Project description: {project_description}
-  expected_output: >
-    README.md, .gitignore, and project metadata files created and saved
-    to the project folder. Return confirmation of all files created.
+description: >
+Generate complete documentation and prepare the project for deployment.
+Project path: {project_path}
+
+Use the generate_readme tool to create a professional README.md
+
+Use the generate_gitignore tool to create a .gitignore file
+
+Use the save_project_metadata tool to save project metadata
+
+The README should include:
+
+Project name and description
+
+Tech stack used
+
+Features list
+
+Setup instructions
+
+File structure
+
+Deployment guide (Netlify, GitHub Pages, Vercel)
+
+Also create a deployment guide that covers:
+
+Netlify drag & drop deployment
+
+GitHub Pages deployment
+
+Vercel deployment
+
+Project name: {project_name}
+Project description: {project_description}
+expected_output: >
+README.md, .gitignore, and project metadata files created and saved
+to the project folder. Return confirmation of all files created
