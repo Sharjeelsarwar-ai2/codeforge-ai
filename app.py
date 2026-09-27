@@ -1,4 +1,15 @@
 # app.py
+
+# =====================================================================
+# CRITICAL: Set environment flags BEFORE any CrewAI/LiteLLM imports!
+# =====================================================================
+import os
+os.environ["CREWAI_DISABLE_PROMPT_CACHING"] = "true"
+os.environ["LITELLM_DROP_PARAMS"] = "true"
+
+# Import utils.llm early to apply the LiteLLM monkey-patch
+import utils.llm  # noqa: F401 — imported for side effects (patches litellm)
+
 import streamlit as st
 import json
 import time
@@ -25,7 +36,6 @@ def check_api_key():
     except Exception:
         pass
 
-    import os
     if os.getenv("GROQ_API_KEY"):
         return True
 
@@ -43,21 +53,16 @@ if not check_api_key():
     3. Add your key in this format:
     ```toml
     GROQ_API_KEY = "gsk_your_actual_key_here"
+    LLM_MODEL = "openai/gpt-oss-120b"
     ```
     4. Save and reboot your app
-    
-    **For Local Development:**
-    Create `.streamlit/secrets.toml` in your project root:
-    ```toml
-    GROQ_API_KEY = "gsk_your_actual_key_here"
-    ```
     
     Get your free Groq API key at: [console.groq.com](https://console.groq.com/keys)
     """)
     st.stop()
 
 
-# --- Now import everything else (after API key check) ---
+# --- Now import everything else (after API key check + patches) ---
 from utils.db import init_db, save_project, update_project_status, get_all_projects, get_project
 from utils.helpers import get_file_icon, get_file_language, get_project_stats, format_file_size, slugify
 from tools.preview_tools import build_preview_html
@@ -96,7 +101,6 @@ st.markdown("""
         margin-bottom: 2rem;
     }
     
-    /* Cards */
     .metric-card {
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -105,7 +109,6 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     
-    /* File Tree */
     .file-item {
         padding: 0.4rem 0.8rem;
         border-radius: 6px;
@@ -119,7 +122,6 @@ st.markdown("""
         background: rgba(255, 255, 255, 0.08);
     }
     
-    /* Agent Status */
     .agent-status {
         padding: 0.6rem 1rem;
         border-radius: 8px;
@@ -142,11 +144,9 @@ st.markdown("""
         border-left: 3px solid rgba(255, 255, 255, 0.1);
     }
     
-    /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
     }
@@ -185,6 +185,8 @@ def init_session_state():
 
 
 init_session_state()
+
+# ... KEEP THE REST OF YOUR app.py FILE UNCHANGED FROM render_sidebar() DOWNWARDS
 
 
 # --- Sidebar Navigation ---
