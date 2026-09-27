@@ -92,7 +92,7 @@ class CodeForgeCrew:
 
             process=Process.sequential,
 
-            verbose=True,
+            verbose=False,
         )
 
         result = planning_crew.kickoff()
@@ -186,7 +186,7 @@ class CodeForgeCrew:
 
             process=Process.sequential,
 
-            verbose=True,
+            verbose=False,
         )
 
         result = development_crew.kickoff()
