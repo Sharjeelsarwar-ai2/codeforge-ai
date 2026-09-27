@@ -10,7 +10,7 @@ Required Streamlit secret or environment variable:
     GROQ_API_KEY = "gsk_..."
 
 Optional configuration:
-    LLM_MODEL = "openai/gpt-oss-120b"
+    LLM_MODEL = "qwen/qwen3-32b"
     DEVELOPMENT_LLM_MODEL = "qwen/qwen3-32b"
     GROQ_MIN_REQUEST_INTERVAL_SECONDS = "1.0"
     GROQ_MAX_RETRIES = "3"
