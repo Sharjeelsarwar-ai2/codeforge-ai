@@ -174,9 +174,10 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=planning_balanced,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=1,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -191,9 +192,10 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=planning_balanced,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=1,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -208,9 +210,10 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=planning_creative,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=1,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -225,9 +228,10 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=planning_creative,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=1,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -242,9 +246,10 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=planning_strict,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         max_iter=1,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -263,10 +268,11 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=development_llm,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         tools=file_tools + [extract_code_blocks],
-        max_iter=8,
+        max_iter=4,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -281,13 +287,14 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=review_llm,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         tools=[
             read_file,
             list_all_files,
         ] + code_tools,
-        max_iter=3,
+        max_iter=2,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -302,13 +309,14 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=review_llm,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         tools=[
             read_file,
             list_all_files,
         ],
-        max_iter=3,
+        max_iter=2,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -323,10 +331,11 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=debug_llm,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         tools=file_tools + code_tools,
-        max_iter=6,
+        max_iter=3,
+        max_retry_limit=0,
         cache=False,
     )
 
@@ -341,12 +350,13 @@ def create_agents() -> dict:
         goal=cfg["goal"],
         backstory=cfg["backstory"],
         llm=review_llm,
-        verbose=True,
+        verbose=False,
         allow_delegation=False,
         tools=project_tools_list + [
             create_file_tree
         ],
-        max_iter=3,
+        max_iter=2,
+        max_retry_limit=0,
         cache=False,
     )
 
