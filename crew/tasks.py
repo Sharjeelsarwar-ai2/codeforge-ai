@@ -124,7 +124,6 @@ def create_planning_tasks(agents: dict, inputs: dict) -> list:
 
         # Animation needs the design system and product direction.
         context=[
-            product_task,
             design_task,
         ],
     )
@@ -147,8 +146,6 @@ def create_planning_tasks(agents: dict, inputs: dict) -> list:
         # Architecture needs the actual design/development direction.
         # Requirements are already represented through the PRD.
         context=[
-            product_task,
-            design_task,
             animation_task,
         ],
     )
@@ -200,7 +197,9 @@ def create_development_tasks(
         agent=agents["developer"],
 
         # The developer needs the complete planning package.
-        context=planning_tasks,
+        # The architecture task is the compact hand-off for development.
+        # Passing all five long planning outputs here multiplies TPM usage.
+        context=[planning_tasks[4]],
     )
 
     # ---------------------------------------------------------------
