@@ -53,8 +53,8 @@ if not check_api_key():
     3. Add your key in this format:
     ```toml
     GROQ_API_KEY = "gsk_your_actual_key_here"
-    LLM_MODEL = "llama-3.1-8b-instant"
-    FALLBACK_LLM_MODEL = "llama-3.1-8b-instant"
+    LLM_MODEL = "openai/gpt-oss-120b"
+    FALLBACK_LLM_MODEL = "openai/gpt-oss-120b"
     ```
     4. Save and reboot your app
     
