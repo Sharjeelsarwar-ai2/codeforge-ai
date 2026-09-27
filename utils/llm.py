@@ -10,7 +10,7 @@ Required Streamlit secret or environment variable:
     GROQ_API_KEY = "gsk_..."
 
 Optional configuration:
-    LLM_MODEL = "llama-3.1-8b-instant"
+    LLM_MODEL = "openai/gpt-oss-120b"
     GROQ_MIN_REQUEST_INTERVAL_SECONDS = "1.0"
     GROQ_MAX_RETRIES = "3"
 """
@@ -56,8 +56,8 @@ def get_api_key(key_name: str = "GROQ_API_KEY") -> str:
 # MODEL AND RATE-LIMIT SETTINGS
 # -------------------------------------------------------------------
 
-DEFAULT_MODEL = "llama-3.1-8b-instant"
-DEFAULT_FALLBACK_MODEL = "llama-3.1-8b-instant"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-120b"
 _DEFAULT_MIN_REQUEST_INTERVAL = 1.0
 _DEFAULT_MAX_RETRIES = 3
 
@@ -68,11 +68,17 @@ def get_model_name() -> str:
         if hasattr(st, "secrets") and "LLM_MODEL" in st.secrets:
             value = st.secrets["LLM_MODEL"]
             if value:
-                return str(value).strip()
+                configured = str(value).strip()
+                if configured.removeprefix("groq/") == "llama-3.1-8b-instant":
+                    return DEFAULT_MODEL
+                return configured
     except Exception:
         pass
 
-    return os.getenv("LLM_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    configured = os.getenv("LLM_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    if configured.removeprefix("groq/") == "llama-3.1-8b-instant":
+        return DEFAULT_MODEL
+    return configured
 
 
 def get_fallback_model_name() -> str:
@@ -81,10 +87,16 @@ def get_fallback_model_name() -> str:
         if hasattr(st, "secrets") and "FALLBACK_LLM_MODEL" in st.secrets:
             value = st.secrets["FALLBACK_LLM_MODEL"]
             if value:
-                return str(value).strip()
+                configured = str(value).strip()
+                if configured.removeprefix("groq/") == "llama-3.1-8b-instant":
+                    return DEFAULT_FALLBACK_MODEL
+                return configured
     except Exception:
         pass
-    return os.getenv("FALLBACK_LLM_MODEL", DEFAULT_FALLBACK_MODEL).strip() or DEFAULT_FALLBACK_MODEL
+    configured = os.getenv("FALLBACK_LLM_MODEL", DEFAULT_FALLBACK_MODEL).strip() or DEFAULT_FALLBACK_MODEL
+    if configured.removeprefix("groq/") == "llama-3.1-8b-instant":
+        return DEFAULT_FALLBACK_MODEL
+    return configured
 
 
 def _groq_model(model_name: str) -> str:
