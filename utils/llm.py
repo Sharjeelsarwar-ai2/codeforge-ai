@@ -289,8 +289,9 @@ def get_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
 
 
 def get_planning_llm(temperature: float = 0.3) -> LLM:
-    # Planning output is structured and should not consume the whole TPM window.
-    return _create_llm(temperature=temperature, max_tokens=768)
+    # GPT-OSS may spend part of the budget on reasoning before producing the
+    # visible plan. 768 tokens can therefore yield an empty completion.
+    return _create_llm(temperature=temperature, max_tokens=2048)
 
 
 def get_development_llm(temperature: float = 0.3) -> LLM:
