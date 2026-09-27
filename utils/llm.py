@@ -11,6 +11,7 @@ Required Streamlit secret or environment variable:
 
 Optional configuration:
     LLM_MODEL = "openai/gpt-oss-120b"
+    DEVELOPMENT_LLM_MODEL = "qwen/qwen3-32b"
     GROQ_MIN_REQUEST_INTERVAL_SECONDS = "1.0"
     GROQ_MAX_RETRIES = "3"
 """
@@ -61,7 +62,19 @@ def get_api_key(key_name: str = "GROQ_API_KEY") -> str:
 # -------------------------------------------------------------------
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
-DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-120b"
+
+# Free, open-source, cloud-hosted model used for code generation.
+# Qwen3 32B is available on Groq's free tier and is specifically strong at
+# code generation (65.7% on LiveCodeBench)[reference:1]. It supports both thinking
+# and non-thinking modes; we use non-thinking for development so the entire
+# max_tokens window goes to visible output.
+DEFAULT_DEVELOPMENT_MODEL = "qwen/qwen3-32b"
+
+# Fallback model used when the primary development model hits a rate limit.
+# Qwen3 32B has its own separate quota on Groq, so it makes a good fallback
+# when the primary model is exhausted.
+DEFAULT_FALLBACK_MODEL = "qwen/qwen3-32b"
+
 _DEFAULT_MIN_REQUEST_INTERVAL = 1.0
 _DEFAULT_MAX_RETRIES = 3
 
@@ -105,6 +118,18 @@ def get_fallback_model_name() -> str:
     if configured.removeprefix("groq/") == "llama-3.1-8b-instant":
         return DEFAULT_FALLBACK_MODEL
     return configured
+
+
+def get_development_model_name() -> str:
+    """Non-reasoning model used for the code-generation phase."""
+    try:
+        if hasattr(st, "secrets") and "DEVELOPMENT_LLM_MODEL" in st.secrets:
+            value = st.secrets["DEVELOPMENT_LLM_MODEL"]
+            if value:
+                return str(value).strip()
+    except Exception:
+        pass
+    return os.getenv("DEVELOPMENT_LLM_MODEL", DEFAULT_DEVELOPMENT_MODEL).strip() or DEFAULT_DEVELOPMENT_MODEL
 
 
 def _groq_model(model_name: str) -> str:
@@ -227,8 +252,6 @@ class RateLimitAwareLLM(LLM):
         for attempt in range(retries + 1):
             _pace_requests()
 
-            # Diagnostic log: if this fires 4x with climbing max_tokens and
-            # then the empty-response error appears, the fix is working.
             logger.warning(
                 "Groq call attempt=%s model=%s max_tokens=%s reasoning_effort=%s",
                 attempt,
@@ -239,35 +262,60 @@ class RateLimitAwareLLM(LLM):
 
             try:
                 response = super().call(request_messages, callbacks or [])
+
+                logger.warning(
+                    "Groq response type=%s len=%s repr=%r",
+                    type(response).__name__,
+                    len(str(response)) if response is not None else 0,
+                    (str(response)[:120] if response is not None else None),
+                )
+
                 if response is not None and str(response).strip():
                     return response
 
                 # -----------------------------------------------------------
                 # EMPTY RESPONSE HANDLING
                 # -----------------------------------------------------------
-                # With gpt-oss, an empty completion almost always means the
-                # hidden reasoning tokens consumed the entire max_tokens
-                # window. Simply re-sending the same request will fail again.
-                # Push reasoning to the floor and GROW the output budget.
+                # On reasoning models (gpt-oss-120b), an empty completion means
+                # the hidden reasoning stream consumed the entire max_tokens
+                # window. The reliable fix is to switch to a non-reasoning
+                # model for the remainder of this call's retries. Qwen3 32B
+                # supports a non-thinking mode that we can use.
                 if attempt >= retries:
                     raise ValueError(
                         "Groq returned an empty response after "
                         f"{retries + 1} attempts."
                     )
 
-                self.kwargs["reasoning_effort"] = "low"
-
-                current = self.max_tokens or 0
-                self.max_tokens = min(
-                    _MAX_ALLOWED_MAX_TOKENS,
-                    max(_MIN_USEFUL_MAX_TOKENS, current * 2),
-                )
-
-                if _DIRECT_OUTPUT_INSTRUCTION not in request_messages:
-                    request_messages = [
-                        *request_messages,
-                        _DIRECT_OUTPUT_INSTRUCTION,
-                    ]
+                non_reasoning = _groq_model(get_development_model_name())
+                if self.model != non_reasoning:
+                    logger.warning(
+                        "Empty response from %s; switching to non-reasoning model %s",
+                        self.model,
+                        non_reasoning,
+                    )
+                    self.model = non_reasoning
+                    # Non-thinking mode for Qwen3: set reasoning_effort="none"
+                    # or remove it entirely.
+                    self.kwargs["reasoning_effort"] = "none"
+                    self.max_tokens = max(
+                        _MIN_USEFUL_MAX_TOKENS,
+                        min(self.max_tokens or 16384, 16384),
+                    )
+                else:
+                    # Already on a non-reasoning model; nudge the model out of
+                    # whatever is causing the empty completion.
+                    self.kwargs["reasoning_effort"] = "none"
+                    current = self.max_tokens or 0
+                    self.max_tokens = min(
+                        _MAX_ALLOWED_MAX_TOKENS,
+                        max(_MIN_USEFUL_MAX_TOKENS, current * 2),
+                    )
+                    if _DIRECT_OUTPUT_INSTRUCTION not in request_messages:
+                        request_messages = [
+                            *request_messages,
+                            _DIRECT_OUTPUT_INSTRUCTION,
+                        ]
 
                 time.sleep(min(2.0, 0.5 * (attempt + 1)))
                 continue
@@ -283,19 +331,11 @@ class RateLimitAwareLLM(LLM):
                     continue
                 if not _is_retryable_rate_limit(error) or attempt >= retries:
                     raise
-                # Groq TPM errors include the prompt plus the requested output
-                # budget. Shrink the next request so the retry can fit after
-                # the provider-suggested cooldown instead of repeating the same
-                # oversized request. Never shrink below a size that can still
-                # produce a real file.
                 if self.max_tokens:
                     self.max_tokens = max(
                         _MIN_USEFUL_MAX_TOKENS, self.max_tokens // 2
                     )
 
-                # GPT-OSS 120B commonly has a very small free-tier TPM window.
-                # Switch once to the lightweight Groq model so a hard limit on
-                # the primary model does not abort the complete pipeline.
                 fallback_model = _groq_model(get_fallback_model_name())
                 switched_to_fallback = (
                     not getattr(self, "_fallback_used", False)
@@ -310,8 +350,6 @@ class RateLimitAwareLLM(LLM):
                     )
 
                 delay = _retry_delay(error, attempt)
-                # A model switch uses a separate model quota; do not make the
-                # user wait through the old model's cooldown unnecessarily.
                 time.sleep(min(delay, 1.0) if switched_to_fallback else delay)
 
         raise RuntimeError("LLM call exhausted its retry budget")
@@ -321,18 +359,27 @@ class RateLimitAwareLLM(LLM):
 # COMMON LLM FACTORY
 # -------------------------------------------------------------------
 
-def _create_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
+def _create_llm(
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    model: str | None = None,
+    *,
+    reasoning_effort: str | None = "low",
+) -> LLM:
     """Create a paced, retrying CrewAI LLM with a bounded output budget."""
     api_key = get_api_key("GROQ_API_KEY")
     os.environ["GROQ_API_KEY"] = api_key
 
-    return RateLimitAwareLLM(
-        model=_groq_model(get_model_name()),
-        api_key=api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        reasoning_effort="low",
-    )
+    kwargs: dict[str, Any] = {
+        "model": _groq_model(model or get_model_name()),
+        "api_key": api_key,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
+
+    return RateLimitAwareLLM(**kwargs)
 
 
 # -------------------------------------------------------------------
@@ -344,23 +391,42 @@ def get_llm(temperature: float = 0.3, max_tokens: int = 4096) -> LLM:
 
 
 def get_planning_llm(temperature: float = 0.3) -> LLM:
-    # Keep enough room for GPT-OSS reasoning plus a complete visible plan.
+    # Planning benefits from reasoning and is small enough to fit the budget.
     return _create_llm(temperature=temperature, max_tokens=4096)
 
 
 def get_development_llm(temperature: float = 0.3) -> LLM:
-    # Development writes many complete files in one response; reasoning tokens
-    # on gpt-oss count against max_tokens, so leave real headroom above the
-    # reasoning budget or the visible answer will be truncated to empty.
-    return _create_llm(temperature=temperature, max_tokens=16384)
+    # Development writes many complete files in one response. Use Qwen3 32B
+    # in non-thinking mode so the entire max_tokens window is available for
+    # visible output instead of being consumed by hidden reasoning.
+    # Qwen3 32B supports reasoning_effort="none" for non-thinking mode[reference:2].
+    return _create_llm(
+        temperature=temperature,
+        max_tokens=16384,
+        model=get_development_model_name(),
+        reasoning_effort="none",
+    )
 
 
 def get_review_llm(temperature: float = 0.2) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=1024)
+    # Review/QA also produce long free-form reports; use the same non-reasoning
+    # model so the full budget goes to visible output.
+    return _create_llm(
+        temperature=temperature,
+        max_tokens=4096,
+        model=get_development_model_name(),
+        reasoning_effort="none",
+    )
 
 
 def get_debug_llm(temperature: float = 0.2) -> LLM:
-    return _create_llm(temperature=temperature, max_tokens=2048)
+    # Debug writes corrected files, so it needs the same treatment as dev.
+    return _create_llm(
+        temperature=temperature,
+        max_tokens=8192,
+        model=get_development_model_name(),
+        reasoning_effort="none",
+    )
 
 
 def get_fast_llm(temperature: float = 0.3) -> LLM:
@@ -368,4 +434,5 @@ def get_fast_llm(temperature: float = 0.3) -> LLM:
 
 
 def get_powerful_llm(temperature: float = 0.3) -> LLM:
+    # General-purpose "powerful" slot — reasoning is fine here.
     return _create_llm(temperature=temperature, max_tokens=8192)
